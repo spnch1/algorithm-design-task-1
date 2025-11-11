@@ -39,7 +39,7 @@ int count_series(const string& filename) {
     bool in_series = false;
 
     while (getline(file, line)) {
-        if (line.empty());
+        if (line.empty()) continue;
 
         uint64_t key = extract_key(line);
 
@@ -103,7 +103,7 @@ void initial_distribution(const string& input_file, vector<string>& b_files) {
     }
 
     input.close();
-    cout << "Initial distribution: " << series_count << " series distributed to" << K << " B files\n";
+    cout << "Initial distribution: " << series_count << " series distributed to " << K << " B files\n";
 }
 
 struct Reader {
@@ -227,7 +227,7 @@ int check_completion(const vector<string>& files) {
 
         if (size > 0) {
             total_files_with_data++;
-            file_with_data;
+            file_with_data = i;
         }
     }
 
@@ -257,7 +257,7 @@ void merge_sort(const string& input_file, const string& output_file) {
         cout << "Pass " << pass << ":\n";
 
         if (merging_from_b) {
-            int b_result = check_completion(c_files);
+            int b_result = check_completion(b_files);
             if (b_result == -2) {
                 cerr << "Error: All B files are empty before merge\n";
                 return;
