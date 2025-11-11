@@ -133,7 +133,7 @@ struct Reader {
 
         string line;
         if (getline(*file, line)) {
-            if (line.empty()) return read_next;
+            if (line.empty()) return read_next();
 
             current.key = extract_key(line);
             current.line = line;
@@ -154,7 +154,7 @@ struct Reader {
     }
 };
 
-void merge_phase(vector<string>& input_files, vector<string>& output_files) {
+void merge(vector<string>& input_files, vector<string>& output_files) {
     vector<ifstream> inputs(K);
     vector<ofstream> outputs(K);
     vector<Reader> readers(K);
@@ -187,18 +187,21 @@ void merge_phase(vector<string>& input_files, vector<string>& output_files) {
 
         for (int i = 0; i < K; i++) {
             if (readers[i].has_record) {
-                pq.push({ readers[i].current.key, i });
+                pq.push(make_pair(readers[i].current.key, i));
             }
         }
 
         while (!pq.empty()) {
-            auto [key, idx] = pq.top();
+            pair<uint64_t, int> top = pq.top();
             pq.pop();
+
+            uint64_t key = top.first;
+            int idx = top.second;
 
             outputs[current_output] << readers[idx].current.line << "\n";
 
             if (readers[idx].read_next()) {
-                pq.push({ readers[idx].current.key, idx });
+                pq.push(make_pair(readers[idx].current.key, idx));
             }
         }
 
@@ -239,7 +242,7 @@ int check_completion(const vector<string>& files) {
     return -1;
 }
 
-void balanced_multiway_merge_sort(const string& input_file, const string& output_file) {
+void merge_sort(const string& input_file, const string& output_file) {
     vector<string> b_files, c_files;
 
     cout << "--- Initial distribution ---\n";
@@ -254,10 +257,28 @@ void balanced_multiway_merge_sort(const string& input_file, const string& output
         cout << "Pass " << pass << ":\n";
 
         if (merging_from_b) {
+            int b_result = check_completion(c_files);
+            if (b_result == -2) {
+                cerr << "Error: All B files are empty before merge\n";
+                return;
+            }
+            if (b_result >= 0) {
+                rename(c_files[b_result].c_str(), output_file.c_str());
+                for (const auto& file : b_files) remove(file.c_str());
+                for (int i = 0; i < K; i++) {
+                    if (i != b_result) remove(c_files[i].c_str());
+                }
+                break;
+            }
+
             cout << "B1, B2, ... , B" << K << " -> C1, C2, ... , C" << K << "\n";
-            merge_phase(b_files, c_files);
+            merge(b_files, c_files);
 
             int result = check_completion(c_files);
+            if (result == -2) {
+                cerr << "Error: All C files are empty after merge!\n";
+                return;
+            }
             if (result >= 0) {
                 rename(c_files[result].c_str(), output_file.c_str());
                 for (const auto& file : b_files) remove(file.c_str());
@@ -270,10 +291,28 @@ void balanced_multiway_merge_sort(const string& input_file, const string& output
             merging_from_b = false;
 
         } else {
+            int c_result = check_completion(c_files);
+            if (c_result == -2) {
+                cerr << "Error: All C files are empty after merge!\n";
+                return;
+            }
+            if (c_result >= 0) {
+                rename(c_files[c_result].c_str(), output_file.c_str());
+                for (const auto& file : c_files) remove(file.c_str());
+                for (int i = 0; i < K; i++) {
+                    if (i != c_result) remove(c_files[i].c_str());
+                }
+                break;
+            }
+
             cout << "C1, C2, ... , C" << K << " -> B1, B2, ... , B" << K << "\n";
-            merge_phase(c_files, b_files);
+            merge(c_files, b_files);
 
             int result = check_completion(b_files);
+            if (result == -2) {
+                cerr << "Error: All B files are empty after merge!\n";
+                return;
+            }
             if (result >= 0) {
                 rename(b_files[result].c_str(), output_file.c_str());
                 for (const auto& file : c_files) remove(file.c_str());
@@ -299,7 +338,7 @@ int main(int argc, char* argv[]) {
     string input_file = argv[1];
     string output_file = argv[2];
 
-    balanced_multiway_merge_sort(input_file, output_file);
+    merge_sort(input_file, output_file);
 
     cout << "\nSort complete! Output: " << output_file << "\n";
 
