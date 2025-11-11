@@ -1,5 +1,9 @@
 // I DON'T CLAIM OWNERSHIP OF THIS CODE. IT'S AI GENERATED. IT'S BEYOND MY KNOWLEDGE.
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -12,6 +16,8 @@
 #include <iomanip>
 #include <algorithm>
 #include <windows.h>
+#include <immintrin.h>
+#include <malloc.h>
 
 using ull = unsigned long long;
 
