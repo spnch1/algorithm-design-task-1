@@ -1,3 +1,5 @@
+/* TODO: FIX SERIES READING & DISTRIBUTION ON L62-L208 */
+
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -74,8 +76,22 @@ void initial_distribution(const string& input_file, vector<string>& b_files, int
 
     if (argc > 3 && string(argv[3]) == "--std") {
         while (getline(input, line)) {
-            outputs[current_file] << line << "\n";
-            current_file = (current_file + 1) % K;
+            if (line.empty()) continue;
+
+            uint64_t key = extract_key(line);
+            buffer.push_back(Record(key, line));
+
+            if (buffer.size() >= CHUNK_SIZE) {
+                sort(buffer.begin(), buffer.end(), [](const Record& a, const Record& b) { return a.key > b.key; });
+
+                for (const auto& rec : buffer) {
+                    outputs[current_file] << rec.line << "\n";
+                }
+
+                current_file = (current_file + 1) % K;
+                series_count++;
+                buffer.clear();
+            }
         }
     } else {
         while (getline(input, line)) {
@@ -122,19 +138,36 @@ struct Reader {
     uint64_t prev_key;
     bool has_record;
     bool series_ended;
+    string pending_line;
+    bool has_pending;
 
-    Reader() : file(nullptr), prev_key(UINT64_MAX), has_record(false), series_ended(true) {}
+    Reader() : file(nullptr), prev_key(UINT64_MAX), has_record(false), series_ended(true), has_pending(false) {}
 
     void init(ifstream* file) {
         this->file = file;
         prev_key = UINT64_MAX;
         has_record = false;
         series_ended = true;
+        pending_line.clear();
+        has_pending = false;
     }
 
     bool start_new_series() {
         prev_key = UINT64_MAX;
         series_ended = false;
+        if (has_pending) {
+            string line = pending_line;
+            has_pending = false;
+            pending_line.clear();
+
+            if (line.empty()) return read_next();
+
+            current.key = extract_key(line);
+            current.line = line;
+            prev_key = current.key;
+            has_record = true;
+            return true;
+        }
         return read_next();
     }
 
@@ -142,25 +175,35 @@ struct Reader {
         if (!file || !file->is_open() || series_ended) return false;
 
         string line;
-        if (getline(*file, line)) {
-            if (line.empty()) return read_next();
+        while (true) {
+            if (has_pending) {
+                line = pending_line;
+                has_pending = false;
+                pending_line.clear();
+            } else {
+                if (!getline(*file, line)) {
+                    series_ended = true;
+                    return false;
+                }
+            }
+            if (line.empty()) continue;
 
-            current.key = extract_key(line);
-            current.line = line;
+            uint64_t key = extract_key(line);
 
-            if (current.key > prev_key) {
+            if (key > prev_key) {
+                pending_line = line;
+                has_pending = true;
                 series_ended = true;
-                file->seekg(-line.length() - 1, ios::cur);
+                has_record = false;
                 return false;
             }
 
-            prev_key = current.key;
+            current.key = key;
+            current.line = line;
+            prev_key = key;
             has_record = true;
             return true;
         }
-
-        series_ended = true;
-        return false;
     }
 };
 
