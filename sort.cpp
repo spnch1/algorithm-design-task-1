@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <queue>
 #include <cstdint>
+#include <chrono>
+#include <iomanip>
 
 using namespace std;
 
@@ -55,7 +57,7 @@ int count_series(const string& filename) {
     return series_count;
 }
 
-void initial_distribution(const string& input_file, vector<string>& b_files) {
+void initial_distribution(const string& input_file, vector<string>& b_files, int argc, char* argv[]) {
     ifstream input(input_file);
     vector<ofstream> outputs(K);
 
@@ -70,24 +72,32 @@ void initial_distribution(const string& input_file, vector<string>& b_files) {
     int current_file = 0;
     int series_count = 0;
 
-    while (getline(input, line)) {
-        if (line.empty()) continue;
-
-        uint64_t key = extract_key(line);
-        buffer.push_back(Record(key, line));
-
-        if (buffer.size() >= CHUNK_SIZE) {
-            sort(buffer.begin(), buffer.end(), [](const Record& a, const Record& b) { return a.key > b.key; });
-
-            for (const auto& rec : buffer) {
-                outputs[current_file] << rec.line << "\n";
-            }
-
+    if (argc > 3 && string(argv[3]) == "--std") {
+        while (getline(input, line)) {
+            outputs[current_file] << line << "\n";
             current_file = (current_file + 1) % K;
-            series_count++;
-            buffer.clear();
+        }
+    } else {
+        while (getline(input, line)) {
+            if (line.empty()) continue;
+
+            uint64_t key = extract_key(line);
+            buffer.push_back(Record(key, line));
+
+            if (buffer.size() >= CHUNK_SIZE) {
+                sort(buffer.begin(), buffer.end(), [](const Record& a, const Record& b) { return a.key > b.key; });
+
+                for (const auto& rec : buffer) {
+                    outputs[current_file] << rec.line << "\n";
+                }
+
+                current_file = (current_file + 1) % K;
+                series_count++;
+                buffer.clear();
+            }
         }
     }
+    
 
     if (!buffer.empty()) {
         sort(buffer.begin(), buffer.end(), [](const Record& a, const Record& b) { return a.key > b.key; });
@@ -212,7 +222,7 @@ void merge(vector<string>& input_files, vector<string>& output_files) {
     for (auto& in : inputs) in.close();
     for (auto& out : outputs) out.close();
 
-    cout << " Merged" << total_series_merged << " series, distributed to " << K << " C files\n";
+    cout << "  Merged " << total_series_merged << " series, distributed to " << K << " output files\n";
 }
 
 int check_completion(const vector<string>& files) {
@@ -242,11 +252,11 @@ int check_completion(const vector<string>& files) {
     return -1;
 }
 
-void merge_sort(const string& input_file, const string& output_file) {
+void merge_sort(const string& input_file, const string& output_file, int argc, char* argv[]) {
     vector<string> b_files, c_files;
 
     cout << "--- Initial distribution ---\n";
-    initial_distribution(input_file, b_files);
+    initial_distribution(input_file, b_files, argc, argv);
 
     int pass = 0;
     bool merging_from_b = true;
@@ -263,15 +273,15 @@ void merge_sort(const string& input_file, const string& output_file) {
                 return;
             }
             if (b_result >= 0) {
-                rename(c_files[b_result].c_str(), output_file.c_str());
-                for (const auto& file : b_files) remove(file.c_str());
+                rename(b_files[b_result].c_str(), output_file.c_str());
                 for (int i = 0; i < K; i++) {
-                    if (i != b_result) remove(c_files[i].c_str());
+                    if (i != b_result) remove(b_files[i].c_str());
                 }
+                for (const auto& file : c_files) remove(file.c_str());
                 break;
             }
 
-            cout << "B1, B2, ... , B" << K << " -> C1, C2, ... , C" << K << "\n";
+            cout << "  B1, B2, ..., B" << K << " -> C1, C2, ..., C" << K << "\n";
             merge(b_files, c_files);
 
             int result = check_completion(c_files);
@@ -293,19 +303,19 @@ void merge_sort(const string& input_file, const string& output_file) {
         } else {
             int c_result = check_completion(c_files);
             if (c_result == -2) {
-                cerr << "Error: All C files are empty after merge!\n";
+                cerr << "Error: All C files are empty before merge!\n";
                 return;
             }
             if (c_result >= 0) {
                 rename(c_files[c_result].c_str(), output_file.c_str());
-                for (const auto& file : c_files) remove(file.c_str());
                 for (int i = 0; i < K; i++) {
                     if (i != c_result) remove(c_files[i].c_str());
                 }
+                for (const auto& file : b_files) remove(file.c_str());
                 break;
             }
 
-            cout << "C1, C2, ... , C" << K << " -> B1, B2, ... , B" << K << "\n";
+            cout << "  C1, C2, ..., C" << K << " -> B1, B2, ..., B" << K << "\n";
             merge(c_files, b_files);
 
             int result = check_completion(b_files);
@@ -330,17 +340,24 @@ void merge_sort(const string& input_file, const string& output_file) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        cerr << "Usage: " << argv[0] << " <input_file> <output_file>\n";
+    if (argc < 3 || argc > 4) {
+        cerr << "Usage: " << argv[0] << " <input_file> <output_file> [--std]\n";
         return 1;
     }
 
     string input_file = argv[1];
     string output_file = argv[2];
 
-    merge_sort(input_file, output_file);
+    auto start_time = chrono::high_resolution_clock::now();
+
+    merge_sort(input_file, output_file, argc, argv);
+
+    auto end_time = chrono::high_resolution_clock::now();
+    auto duration = chrono::duration_cast<chrono::milliseconds>(end_time - start_time);
 
     cout << "\nSort complete! Output: " << output_file << "\n";
+    cout << "Total time: " << fixed << setprecision(3) 
+         << duration.count() / 1000.0 << " seconds\n";
 
     return 0;
 }
