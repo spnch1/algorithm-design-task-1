@@ -51,3 +51,7 @@
 # CLion project files
 .idea
 cmake-build-*
+
+/.vscode/
+*.txt
+*.tmp
