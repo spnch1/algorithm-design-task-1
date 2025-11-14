@@ -39,13 +39,13 @@ uint64_t extract_key(const std::string& line) {
 }
 
 void initial_distribution_standard(const std::string& input_file, std::vector<std::string>& b_files) {
-    std::ifstream input(input_file);
+    std::ifstream input(input_file, std::ios::binary);
     std::vector<std::ofstream> outputs(K);
 
     b_files.clear();
     for (int i = 0; i < K; i++) {
         b_files.push_back("B" + std::to_string(i + 1) + ".tmp");
-        outputs[i].open(b_files[i]);
+        outputs[i].open(b_files[i], std::ios::binary);
     }
 
     int current_file = 0;
@@ -83,13 +83,13 @@ void initial_distribution_standard(const std::string& input_file, std::vector<st
 }
 
 void initial_distribution_optimized(const std::string& input_file, std::vector<std::string>& b_files) {
-    std::ifstream input(input_file);
+    std::ifstream input(input_file, std::ios::binary);
     std::vector<std::ofstream> outputs(K);
 
     b_files.clear();
     for (int i = 0; i < K; i++) {
         b_files.push_back("B" + std::to_string(i + 1) + ".tmp");
-        outputs[i].open(b_files[i]);
+        outputs[i].open(b_files[i], std::ios::binary);
     }
 
     std::vector<Record> buffer;
@@ -167,6 +167,8 @@ struct Reader {
 
         std::string line;
         
+        last_pos = file->tellg(); 
+        
         if (getline(*file, line)) {
             if (line.empty()) return read_next();
 
@@ -174,9 +176,9 @@ struct Reader {
             current.line = line;
 
             if (has_record && current.key > prev_key) {
-                file->seekg(-((int)line.length() + 1), std::ios::cur);
+                file->seekg(last_pos); 
+
                 series_ended = true;
-                has_record = false;
                 return false;
             }
 
@@ -196,14 +198,12 @@ void merge(std::vector<std::string>& input_files, std::vector<std::string>& outp
     std::vector<Reader> readers(K);
 
     for (int i = 0; i < K; i++) {
-        inputs[i].open(input_files[i]);
+        inputs[i].open(input_files[i], std::ios::binary);
         readers[i].init(&inputs[i]);
     }
 
-    output_files.clear();
     for (int i = 0; i < K; i++) {
-        output_files.push_back("C" + std::to_string(i + 1) + ".tmp");
-        outputs[i].open(output_files[i]);
+        outputs[i].open(output_files[i], std::ios::binary);
     }
 
     int current_output = 0;
@@ -219,7 +219,7 @@ void merge(std::vector<std::string>& input_files, std::vector<std::string>& outp
 
         if (active_sources == 0) break;
 
-        std::priority_queue<std::pair<uint64_t, int>, std::vector<std::pair<uint64_t, int>>, std::greater<std::pair<uint64_t, int>>> pq;
+        std::priority_queue<std::pair<uint64_t, int>> pq;
 
         for (int i = 0; i < K; i++) {
             if (readers[i].has_record) {
@@ -255,7 +255,7 @@ int check_completion(const std::vector<std::string>& files) {
     int total_files_with_data = 0;
 
     for (int i = 0; i < K; i++) {
-        std::ifstream file(files[i]);
+        std::ifstream file(files[i], std::ios::binary);
         file.seekg(0, std::ios::end);
         size_t size = file.tellg();
         file.close();
@@ -292,6 +292,11 @@ void merge_sort(const std::string& input_file, const std::string& output_file, b
     bool merging_from_b = true;
 
     std::cout << "--- Merge phase ---\n";
+
+    for (int i = 0; i < K; i++) {
+        c_files.push_back("C" + std::to_string(i + 1) + ".tmp");
+    }
+
     while (true) {
         pass++;
         std::cout << "Pass " << pass << ":\n";
