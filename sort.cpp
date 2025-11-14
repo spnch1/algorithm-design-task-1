@@ -1,5 +1,3 @@
-/* TODO: FIX SERIES READING & DISTRIBUTION ON L62-L208 */
-
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -10,8 +8,6 @@
 #include <chrono>
 #include <iomanip>
 
-using namespace std;
-
 const size_t MEMORY_LIMIT = 500 * 1024 * 1024; // 500 MB
 const size_t RECORD_SIZE = 100;
 const size_t CHUNK_SIZE = MEMORY_LIMIT / RECORD_SIZE;
@@ -19,104 +15,113 @@ const int K = 3;
 
 struct Record {
     uint64_t key;
-    string line;
+    std::string line;
 
     Record() : key(0) {};
-    Record(uint64_t k, const string& l) : key(k), line(l) {}
+    Record(uint64_t k, const std::string& l) : key(k), line(l) {}
 };
 
-uint64_t extract_key(const string& line) {
+uint64_t extract_key(const std::string& line) {
     size_t pos = line.find('-');
-    if (pos != string::npos) {
-        return stoull(line.substr(0, pos));
+    if (pos != std::string::npos) {
+        std::string num = line.substr(0, pos);
+        size_t start = num.find_first_not_of(" \t\r\n");
+        size_t end = num.find_last_not_of(" \t\r\n");
+        if (start == std::string::npos) return 0;
+        num = num.substr(start, end - start + 1);
+        try {
+            return stoull(num);
+        } catch (...) {
+            return 0;
+        }
     }
     return 0;
 }
 
-int count_series(const string& filename) {
-    ifstream file(filename);
-    if (!file.is_open()) return 0;
+void initial_distribution_standard(const std::string& input_file, std::vector<std::string>& b_files) {
+    std::ifstream input(input_file);
+    std::vector<std::ofstream> outputs(K);
 
+    b_files.clear();
+    for (int i = 0; i < K; i++) {
+        b_files.push_back("B" + std::to_string(i + 1) + ".tmp");
+        outputs[i].open(b_files[i]);
+    }
+
+    int current_file = 0;
     int series_count = 0;
+    std::string line;
     uint64_t prev_key = UINT64_MAX;
-    string line;
     bool in_series = false;
 
-    while (getline(file, line)) {
+    while (std::getline(input, line)) {
         if (line.empty()) continue;
 
         uint64_t key = extract_key(line);
 
-        if (!in_series || key > prev_key) {
+        if (in_series && key > prev_key) {
+            current_file = (current_file + 1) % K;
             series_count++;
-            in_series = true;
+            in_series = false;
         }
 
+        outputs[current_file] << line << "\n";
         prev_key = key;
+        in_series = true;
     }
 
-    file.close();
-    return series_count;
+    if (in_series) {
+        series_count++;
+    }
+
+    for (auto& out : outputs) {
+        out.close();
+    }
+    input.close();
+    
+    std::cout << "Initial distribution (standard): " << series_count << " natural series found and distributed to " << K << " B files\n";
 }
 
-void initial_distribution(const string& input_file, vector<string>& b_files, int argc, char* argv[]) {
-    ifstream input(input_file);
-    vector<ofstream> outputs(K);
+void initial_distribution_optimized(const std::string& input_file, std::vector<std::string>& b_files) {
+    std::ifstream input(input_file);
+    std::vector<std::ofstream> outputs(K);
 
     b_files.clear();
     for (int i = 0; i < K; i++) {
-        b_files.push_back("B" + to_string(i + 1) + ".tmp");
+        b_files.push_back("B" + std::to_string(i + 1) + ".tmp");
         outputs[i].open(b_files[i]);
     }
 
-    vector<Record> buffer;
-    string line;
+    std::vector<Record> buffer;
+    std::string line;
     int current_file = 0;
     int series_count = 0;
 
-    if (argc > 3 && string(argv[3]) == "--std") {
-        while (getline(input, line)) {
-            if (line.empty()) continue;
+    while (getline(input, line)) {
+        if (line.empty()) continue;
 
-            uint64_t key = extract_key(line);
-            buffer.push_back(Record(key, line));
+        uint64_t key = extract_key(line);
+        buffer.push_back(Record(key, line));
 
-            if (buffer.size() >= CHUNK_SIZE) {
-                sort(buffer.begin(), buffer.end(), [](const Record& a, const Record& b) { return a.key > b.key; });
+        if (buffer.size() >= CHUNK_SIZE) {
+            sort(buffer.begin(), buffer.end(), [](const Record& a, const Record& b) { 
+                return a.key > b.key; 
+            });
 
-                for (const auto& rec : buffer) {
-                    outputs[current_file] << rec.line << "\n";
-                }
-
-                current_file = (current_file + 1) % K;
-                series_count++;
-                buffer.clear();
+            for (const auto& rec : buffer) {
+                outputs[current_file] << rec.line << "\n";
             }
-        }
-    } else {
-        while (getline(input, line)) {
-            if (line.empty()) continue;
 
-            uint64_t key = extract_key(line);
-            buffer.push_back(Record(key, line));
-
-            if (buffer.size() >= CHUNK_SIZE) {
-                sort(buffer.begin(), buffer.end(), [](const Record& a, const Record& b) { return a.key > b.key; });
-
-                for (const auto& rec : buffer) {
-                    outputs[current_file] << rec.line << "\n";
-                }
-
-                current_file = (current_file + 1) % K;
-                series_count++;
-                buffer.clear();
-            }
+            current_file = (current_file + 1) % K;
+            series_count++;
+            buffer.clear();
         }
     }
-    
 
     if (!buffer.empty()) {
-        sort(buffer.begin(), buffer.end(), [](const Record& a, const Record& b) { return a.key > b.key; });
+        sort(buffer.begin(), buffer.end(), [](const Record& a, const Record& b) { 
+            return a.key > b.key; 
+        });
 
         for (const auto& rec : buffer) {
             outputs[current_file] << rec.line << "\n";
@@ -127,90 +132,68 @@ void initial_distribution(const string& input_file, vector<string>& b_files, int
     for (auto& out : outputs) {
         out.close();
     }
-
     input.close();
-    cout << "Initial distribution: " << series_count << " series distributed to " << K << " B files\n";
+    
+    std::cout << "Initial distribution (optimized): " << series_count << " large sorted series created (500MB each) and distributed to " << K << " B files\n";
 }
 
 struct Reader {
-    ifstream* file;
+    std::ifstream* file;
     Record current;
     uint64_t prev_key;
     bool has_record;
     bool series_ended;
-    string pending_line;
-    bool has_pending;
+    std::streampos last_pos;
 
-    Reader() : file(nullptr), prev_key(UINT64_MAX), has_record(false), series_ended(true), has_pending(false) {}
+    Reader() : file(nullptr), prev_key(UINT64_MAX), has_record(false), series_ended(true), last_pos(0) {}
 
-    void init(ifstream* file) {
+    void init(std::ifstream* file) {
         this->file = file;
         prev_key = UINT64_MAX;
         has_record = false;
         series_ended = true;
-        pending_line.clear();
-        has_pending = false;
+        last_pos = 0;
     }
 
     bool start_new_series() {
         prev_key = UINT64_MAX;
         series_ended = false;
-        if (has_pending) {
-            string line = pending_line;
-            has_pending = false;
-            pending_line.clear();
-
-            if (line.empty()) return read_next();
-
-            current.key = extract_key(line);
-            current.line = line;
-            prev_key = current.key;
-            has_record = true;
-            return true;
-        }
+        has_record = false;
         return read_next();
     }
 
     bool read_next() {
         if (!file || !file->is_open() || series_ended) return false;
 
-        string line;
-        while (true) {
-            if (has_pending) {
-                line = pending_line;
-                has_pending = false;
-                pending_line.clear();
-            } else {
-                if (!getline(*file, line)) {
-                    series_ended = true;
-                    return false;
-                }
-            }
-            if (line.empty()) continue;
+        std::string line;
+        
+        if (getline(*file, line)) {
+            if (line.empty()) return read_next();
 
-            uint64_t key = extract_key(line);
+            current.key = extract_key(line);
+            current.line = line;
 
-            if (key > prev_key) {
-                pending_line = line;
-                has_pending = true;
+            if (has_record && current.key > prev_key) {
+                file->seekg(-((int)line.length() + 1), std::ios::cur);
                 series_ended = true;
                 has_record = false;
                 return false;
             }
 
-            current.key = key;
-            current.line = line;
-            prev_key = key;
+            prev_key = current.key;
             has_record = true;
             return true;
         }
+
+        series_ended = true;
+        return false;
     }
 };
 
-void merge(vector<string>& input_files, vector<string>& output_files) {
-    vector<ifstream> inputs(K);
-    vector<ofstream> outputs(K);
-    vector<Reader> readers(K);
+void merge(std::vector<std::string>& input_files, std::vector<std::string>& output_files) {
+    std::vector<std::ifstream> inputs(K);
+    std::vector<std::ofstream> outputs(K);
+    std::vector<Reader> readers(K);
 
     for (int i = 0; i < K; i++) {
         inputs[i].open(input_files[i]);
@@ -219,7 +202,7 @@ void merge(vector<string>& input_files, vector<string>& output_files) {
 
     output_files.clear();
     for (int i = 0; i < K; i++) {
-        output_files.push_back("C" + to_string(i + 1) + ".tmp");
+        output_files.push_back("C" + std::to_string(i + 1) + ".tmp");
         outputs[i].open(output_files[i]);
     }
 
@@ -236,25 +219,24 @@ void merge(vector<string>& input_files, vector<string>& output_files) {
 
         if (active_sources == 0) break;
 
-        priority_queue<pair<uint64_t, int>, vector<pair<uint64_t, int>>, greater<pair<uint64_t, int>>> pq;
+        std::priority_queue<std::pair<uint64_t, int>, std::vector<std::pair<uint64_t, int>>, std::greater<std::pair<uint64_t, int>>> pq;
 
         for (int i = 0; i < K; i++) {
             if (readers[i].has_record) {
-                pq.push(make_pair(readers[i].current.key, i));
+                pq.push(std::make_pair(readers[i].current.key, i));
             }
         }
 
         while (!pq.empty()) {
-            pair<uint64_t, int> top = pq.top();
+            std::pair<uint64_t, int> top = pq.top();
             pq.pop();
 
-            uint64_t key = top.first;
             int idx = top.second;
 
             outputs[current_output] << readers[idx].current.line << "\n";
 
             if (readers[idx].read_next()) {
-                pq.push(make_pair(readers[idx].current.key, idx));
+                pq.push(std::make_pair(readers[idx].current.key, idx));
             }
         }
 
@@ -265,16 +247,16 @@ void merge(vector<string>& input_files, vector<string>& output_files) {
     for (auto& in : inputs) in.close();
     for (auto& out : outputs) out.close();
 
-    cout << "  Merged " << total_series_merged << " series, distributed to " << K << " output files\n";
+    std::cout << "  Merged " << total_series_merged << " series, distributed to " << K << " output files\n";
 }
 
-int check_completion(const vector<string>& files) {
+int check_completion(const std::vector<std::string>& files) {
     int file_with_data = -1;
     int total_files_with_data = 0;
 
     for (int i = 0; i < K; i++) {
-        ifstream file(files[i]);
-        file.seekg(0, ios::end);
+        std::ifstream file(files[i]);
+        file.seekg(0, std::ios::end);
         size_t size = file.tellg();
         file.close();
 
@@ -295,24 +277,29 @@ int check_completion(const vector<string>& files) {
     return -1;
 }
 
-void merge_sort(const string& input_file, const string& output_file, int argc, char* argv[]) {
-    vector<string> b_files, c_files;
+void merge_sort(const std::string& input_file, const std::string& output_file, bool use_standard) {
+    std::vector<std::string> b_files, c_files;
 
-    cout << "--- Initial distribution ---\n";
-    initial_distribution(input_file, b_files, argc, argv);
+    std::cout << "--- Initial distribution ---\n";
+    
+    if (use_standard) {
+        initial_distribution_standard(input_file, b_files);
+    } else {
+        initial_distribution_optimized(input_file, b_files);
+    }
 
     int pass = 0;
     bool merging_from_b = true;
 
-    cout << "--- Merge phase ---\n";
+    std::cout << "--- Merge phase ---\n";
     while (true) {
         pass++;
-        cout << "Pass " << pass << ":\n";
+        std::cout << "Pass " << pass << ":\n";
 
         if (merging_from_b) {
             int b_result = check_completion(b_files);
             if (b_result == -2) {
-                cerr << "Error: All B files are empty before merge\n";
+                std::cerr << "Error: All B files are empty before merge\n";
                 return;
             }
             if (b_result >= 0) {
@@ -324,12 +311,12 @@ void merge_sort(const string& input_file, const string& output_file, int argc, c
                 break;
             }
 
-            cout << "  B1, B2, ..., B" << K << " -> C1, C2, ..., C" << K << "\n";
+            std::cout << "  B1, B2, ..., B" << K << " -> C1, C2, ..., C" << K << "\n";
             merge(b_files, c_files);
 
             int result = check_completion(c_files);
             if (result == -2) {
-                cerr << "Error: All C files are empty after merge!\n";
+                std::cerr << "Error: All C files are empty after merge!\n";
                 return;
             }
             if (result >= 0) {
@@ -346,7 +333,7 @@ void merge_sort(const string& input_file, const string& output_file, int argc, c
         } else {
             int c_result = check_completion(c_files);
             if (c_result == -2) {
-                cerr << "Error: All C files are empty before merge!\n";
+                std::cerr << "Error: All C files are empty before merge!\n";
                 return;
             }
             if (c_result >= 0) {
@@ -358,12 +345,12 @@ void merge_sort(const string& input_file, const string& output_file, int argc, c
                 break;
             }
 
-            cout << "  C1, C2, ..., C" << K << " -> B1, B2, ..., B" << K << "\n";
+            std::cout << "  C1, C2, ..., C" << K << " -> B1, B2, ..., B" << K << "\n";
             merge(c_files, b_files);
 
             int result = check_completion(b_files);
             if (result == -2) {
-                cerr << "Error: All B files are empty after merge!\n";
+                std::cerr << "Error: All B files are empty after merge!\n";
                 return;
             }
             if (result >= 0) {
@@ -379,27 +366,31 @@ void merge_sort(const string& input_file, const string& output_file, int argc, c
         }
     }
 
-    cout << "\nComplexity: O(log_" << K << " n) passes, O(n log_" << K << " n) copies\n";
+    std::cout << "\nComplexity: O(log_" << K << " n) passes, O(n log_" << K << " n) copies\n";
 }
 
 int main(int argc, char* argv[]) {
     if (argc < 3 || argc > 4) {
-        cerr << "Usage: " << argv[0] << " <input_file> <output_file> [--std]\n";
+        std::cerr << "Usage: " << argv[0] << " <input_file> <output_file> [--std]\n";
+        std::cerr << "\nModes:\n";
+        std::cerr << "  (default): OPTIMIZED - Pre-sort 500MB chunks in RAM, creates large sorted series\n";
+        std::cerr << "  --std:     STANDARD - Read natural series from input file as-is\n";
         return 1;
     }
 
-    string input_file = argv[1];
-    string output_file = argv[2];
+    std::string input_file = argv[1];
+    std::string output_file = argv[2];
+    bool use_standard = (argc == 4 && std::string(argv[3]) == "--std");
 
-    auto start_time = chrono::high_resolution_clock::now();
+    auto start_time = std::chrono::high_resolution_clock::now();
 
-    merge_sort(input_file, output_file, argc, argv);
+    merge_sort(input_file, output_file, use_standard);
 
-    auto end_time = chrono::high_resolution_clock::now();
-    auto duration = chrono::duration_cast<chrono::milliseconds>(end_time - start_time);
+    auto end_time = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
 
-    cout << "\nSort complete! Output: " << output_file << "\n";
-    cout << "Total time: " << fixed << setprecision(3) 
+    std::cout << "\nSort complete! Output: " << output_file << "\n";
+    std::cout << "Total time: " << std::fixed << std::setprecision(3) 
          << duration.count() / 1000.0 << " seconds\n";
 
     return 0;
