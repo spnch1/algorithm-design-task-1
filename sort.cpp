@@ -7,11 +7,9 @@
 #include <cstdint>
 #include <chrono>
 #include <iomanip>
+#include <limits>
 
 const size_t MEMORY_LIMIT = 500 * 1024 * 1024; // 500 MB
-const size_t RECORD_SIZE = 100;
-const size_t CHUNK_SIZE = MEMORY_LIMIT / RECORD_SIZE;
-const int K = 3;
 
 struct Record {
     uint64_t key;
@@ -23,12 +21,16 @@ struct Record {
 
 uint64_t extract_key(const std::string& line) {
     size_t pos = line.find('-');
+
     if (pos != std::string::npos) {
         std::string num = line.substr(0, pos);
         size_t start = num.find_first_not_of(" \t\r\n");
         size_t end = num.find_last_not_of(" \t\r\n");
+
         if (start == std::string::npos) return 0;
+
         num = num.substr(start, end - start + 1);
+
         try {
             return stoull(num);
         } catch (...) {
@@ -38,7 +40,7 @@ uint64_t extract_key(const std::string& line) {
     return 0;
 }
 
-void initial_distribution_standard(const std::string& input_file, std::vector<std::string>& b_files) {
+void initial_distribution_standard(const std::string& input_file, std::vector<std::string>& b_files, int K) {
     std::ifstream input(input_file, std::ios::binary);
     std::vector<std::ofstream> outputs(K);
 
@@ -82,7 +84,7 @@ void initial_distribution_standard(const std::string& input_file, std::vector<st
     std::cout << "Initial distribution (standard): " << series_count << " natural series found and distributed to " << K << " B files\n";
 }
 
-void initial_distribution_optimized(const std::string& input_file, std::vector<std::string>& b_files) {
+void initial_distribution_optimized(const std::string& input_file, std::vector<std::string>& b_files, int K) {
     std::ifstream input(input_file, std::ios::binary);
     std::vector<std::ofstream> outputs(K);
 
@@ -96,14 +98,16 @@ void initial_distribution_optimized(const std::string& input_file, std::vector<s
     std::string line;
     int current_file = 0;
     int series_count = 0;
+    size_t current_buffer_bytes = 0;
 
     while (getline(input, line)) {
         if (line.empty()) continue;
 
         uint64_t key = extract_key(line);
         buffer.push_back(Record(key, line));
+        current_buffer_bytes += line.length();
 
-        if (buffer.size() >= CHUNK_SIZE) {
+        if (current_buffer_bytes >= MEMORY_LIMIT) {
             sort(buffer.begin(), buffer.end(), [](const Record& a, const Record& b) { 
                 return a.key > b.key; 
             });
@@ -115,6 +119,7 @@ void initial_distribution_optimized(const std::string& input_file, std::vector<s
             current_file = (current_file + 1) % K;
             series_count++;
             buffer.clear();
+            current_buffer_bytes = 0;
         }
     }
 
@@ -192,7 +197,7 @@ struct Reader {
     }
 };
 
-void merge(std::vector<std::string>& input_files, std::vector<std::string>& output_files) {
+void merge(std::vector<std::string>& input_files, std::vector<std::string>& output_files, int K) {
     std::vector<std::ifstream> inputs(K);
     std::vector<std::ofstream> outputs(K);
     std::vector<Reader> readers(K);
@@ -250,7 +255,7 @@ void merge(std::vector<std::string>& input_files, std::vector<std::string>& outp
     std::cout << "  Merged " << total_series_merged << " series, distributed to " << K << " output files\n";
 }
 
-int check_completion(const std::vector<std::string>& files) {
+int check_completion(const std::vector<std::string>& files, int K) {
     int file_with_data = -1;
     int total_files_with_data = 0;
 
@@ -277,101 +282,56 @@ int check_completion(const std::vector<std::string>& files) {
     return -1;
 }
 
-void merge_sort(const std::string& input_file, const std::string& output_file, bool use_standard) {
+void merge_sort(const std::string& input_file, const std::string& output_file, bool use_standard, int K) {
     std::vector<std::string> b_files, c_files;
 
     std::cout << "--- Initial distribution ---\n";
     
     if (use_standard) {
-        initial_distribution_standard(input_file, b_files);
+        initial_distribution_standard(input_file, b_files, K);
     } else {
-        initial_distribution_optimized(input_file, b_files);
+        initial_distribution_optimized(input_file, b_files, K);
     }
-
-    int pass = 0;
-    bool merging_from_b = true;
-
-    std::cout << "--- Merge phase ---\n";
 
     for (int i = 0; i < K; i++) {
         c_files.push_back("C" + std::to_string(i + 1) + ".tmp");
     }
 
+    std::vector<std::string> *input_names = &b_files;
+    std::vector<std::string> *output_names = &c_files;
+
+    int pass = 0;
+    std::cout << "--- Merge phase ---\n";
+
     while (true) {
         pass++;
         std::cout << "Pass " << pass << ":\n";
 
-        if (merging_from_b) {
-            int b_result = check_completion(b_files);
-            if (b_result == -2) {
-                std::cerr << "Error: All B files are empty before merge\n";
-                return;
-            }
-            if (b_result >= 0) {
-                rename(b_files[b_result].c_str(), output_file.c_str());
-                for (int i = 0; i < K; i++) {
-                    if (i != b_result) remove(b_files[i].c_str());
-                }
-                for (const auto& file : c_files) remove(file.c_str());
-                break;
-            }
+        int result = check_completion(*input_names, K);
 
-            std::cout << "  B1, B2, ..., B" << K << " -> C1, C2, ..., C" << K << "\n";
-            merge(b_files, c_files);
-
-            int result = check_completion(c_files);
-            if (result == -2) {
-                std::cerr << "Error: All C files are empty after merge!\n";
-                return;
-            }
-            if (result >= 0) {
-                rename(c_files[result].c_str(), output_file.c_str());
-                for (const auto& file : b_files) remove(file.c_str());
-                for (int i = 0; i < K; i++) {
-                    if (i != result) remove(c_files[i].c_str());
-                }
-                break;
-            }
-
-            merging_from_b = false;
-
-        } else {
-            int c_result = check_completion(c_files);
-            if (c_result == -2) {
-                std::cerr << "Error: All C files are empty before merge!\n";
-                return;
-            }
-            if (c_result >= 0) {
-                rename(c_files[c_result].c_str(), output_file.c_str());
-                for (int i = 0; i < K; i++) {
-                    if (i != c_result) remove(c_files[i].c_str());
-                }
-                for (const auto& file : b_files) remove(file.c_str());
-                break;
-            }
-
-            std::cout << "  C1, C2, ..., C" << K << " -> B1, B2, ..., B" << K << "\n";
-            merge(c_files, b_files);
-
-            int result = check_completion(b_files);
-            if (result == -2) {
-                std::cerr << "Error: All B files are empty after merge!\n";
-                return;
-            }
-            if (result >= 0) {
-                rename(b_files[result].c_str(), output_file.c_str());
-                for (const auto& file : c_files) remove(file.c_str());
-                for (int i = 0; i < K; i++) {
-                    if (i != result) remove(b_files[i].c_str());
-                }
-                break;
-            }
-
-            merging_from_b = true;
+        if (result == -2) {
+            std::cerr << "Error: All input files are empty before merge\n";
+            return;
         }
-    }
 
-    std::cout << "\nComplexity: O(log_" << K << " n) passes, O(n log_" << K << " n) copies\n";
+        if (result >= 0) {
+            std::string final_file = (*input_names)[result];
+            rename(final_file.c_str(), output_file.c_str());
+
+            for (const auto& file : *input_names) {
+                if (file != final_file) remove(file.c_str());
+            }
+            for (const auto& file : *output_names) {
+                remove(file.c_str());
+            }
+            break;
+        }
+
+        std::cout << "  Merging...\n";
+        merge(*input_names, *output_names, K);
+
+        std::swap(input_names, output_names);
+    }
 }
 
 int main(int argc, char* argv[]) {
@@ -387,16 +347,29 @@ int main(int argc, char* argv[]) {
     std::string output_file = argv[2];
     bool use_standard = (argc == 4 && std::string(argv[3]) == "--std");
 
+    int K = 0;
+    while (K < 2 || K > 10) {
+        std::cout << "Enter the number of merge ways (K) [2-10]: ";
+        if (!(std::cin >> K)) {
+            std::cin.clear();
+            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+            std::cerr << "Invalid input. Please enter a number.\n";
+        } else if (K < 2 || K > 10) {
+            std::cerr << "Value must be between 2 and 10.\n";
+        }
+    }
+    std::cout << "Using K = " << K << "\n";
+
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    merge_sort(input_file, output_file, use_standard);
+    merge_sort(input_file, output_file, use_standard, K);
 
     auto end_time = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
 
     std::cout << "\nSort complete! Output: " << output_file << "\n";
     std::cout << "Total time: " << std::fixed << std::setprecision(3) 
-         << duration.count() / 1000.0 << " seconds\n";
+              << duration.count() / 1000.0 << " seconds\n";
 
     return 0;
 }
