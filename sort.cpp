@@ -9,7 +9,7 @@
 #include <iomanip>
 #include <limits>
 
-const size_t MEMORY_LIMIT = 500 * 1024 * 1024; // 500 MB
+constexpr size_t MEMORY_LIMIT = 500 * 1024 * 1024; // 500 MB
 
 struct Record {
     uint64_t key;
